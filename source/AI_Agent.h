@@ -1,14 +1,19 @@
 #pragma once
 #include<boost/asio.hpp>
+#include<boost/beast.hpp>
+#include<boost/beast/ssl.hpp>
+#include<boost/beast/core.hpp>
 
 class Ai_Agent
 {
 public:
     Ai_Agent(std::string url ,std::string port , std::string key);
+    ~Ai_Agent();
 private:
-    void __chat(boost::asio::ip::tcp::socket &socket);
-    void __read(boost::asio::ip::tcp::socket &socket);
-    std::string __url;
-    std::string __key;
-    std::string __history;
+    void __chat(boost::beast::ssl_stream<boost::beast::tcp_stream> &ss);
+    void __read(boost::beast::ssl_stream<boost::beast::tcp_stream> &ss);
+    std::string __buf; 
+    class __Chatrecode;
+    __Chatrecode* __chatrecode;
  };
+ 
