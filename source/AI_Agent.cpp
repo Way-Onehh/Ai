@@ -34,7 +34,7 @@ private:
     httprequest __req;
     parser __parser;
 public:
-    __Chatrecode(string auth)
+    __Chatrecode(string host,string target,string model,string key )
     {
         string josn__str=R"({
         "messages": [
@@ -47,7 +47,7 @@ public:
             "role": "user"
           }
         ],
-        "model": "deepseek-chat",
+        "model": null,
         "frequency_penalty": 0,
         "max_tokens": 2048,
         "presence_penalty": 0,
@@ -65,14 +65,16 @@ public:
         "top_logprobs": null
 })";
         __json=json::parse(josn__str);
+        __json.as_object().insert_or_assign("model",model);
         __req.method(http::verb::post);
-        __req.target("/chat/completions");
+        __req.target(target);
         __req.version(11);
-        __req.set(http::field::host,"api.deepseek.com");
-        __req.set(http::field::user_agent, "AI.api");
+        __req.set(http::field::host,host);
+        __req.set(http::field::user_agent, "curl");
         __req.set(http::field::accept,"*/*");
         __req.set(http::field::content_type,"application/json");
-        __req.set(http::field::authorization,auth);
+        auto p_key=std::string("Bearer ")+=key;
+        __req.set(http::field::authorization,p_key);
     }
 
     void commit(std::string role,std::string content)
@@ -99,18 +101,43 @@ public:
     }
 };
 
-Ai_Agent::Ai_Agent(std::string url,std::string port,std::string key) {
-    //Initialization
-    __chatrecode=new __Chatrecode(key);
-    boost::asio::io_context io_context;
-    boost::asio::ip::tcp::resolver resolver(io_context);
-    auto endpoints = resolver.resolve(url, port);
-    boost::beast::net::ssl::context cox(boost::beast::net::ssl::context::tlsv12_client);
-    cox.set_default_verify_paths();
-    boost::beast::ssl_stream<boost::beast::tcp_stream> ss(io_context,cox);
-    boost::beast::get_lowest_layer(ss).connect(endpoints);
-    ss.handshake(boost::asio::ssl::stream_base::client);
+class Ai_Agent::__Api
+{
 
+    public:
+        boost::beast::net::ssl::context cox;
+        boost::beast::ssl_stream<boost::beast::tcp_stream> ss;
+        boost::asio::io_context * _io_adder;
+        string _host;
+        __Api(boost::asio::io_context &io,string host): ss(io,cox),cox(boost::beast::net::ssl::context::tlsv13_client)
+        {
+            SSL_set_tlsext_host_name(ss.native_handle(), host.c_str());
+            _io_adder= &io;
+            _host=host;
+            boost::asio::ip::tcp::resolver resolver(io);
+            auto endpoints = resolver.resolve(host, "443");
+            cox.set_default_verify_paths();
+            cox.set_verify_mode(boost::asio::ssl::verify_peer);
+            boost::beast::get_lowest_layer(ss).connect(endpoints);
+            ss.handshake(boost::asio::ssl::stream_base::client);
+        }
+        
+};
+
+Ai_Agent::Ai_Agent(std::string url,std::string model,std::string key) {
+    //Initialization
+    boost::regex url_regex(R"(https://(.*?)(/.*))");
+    boost::smatch match;
+    boost::regex_search(url,match,url_regex);
+    string host=match[1];
+    string target=match[2]; 
+
+    if(host.empty() || target.empty()) throw ;
+     
+    __chatrecode=new __Chatrecode(host,target,model,key);
+    boost::asio::io_context io;
+    __api=new __Api(io,host);
+    auto& ss=__api->ss;
     boost::asio::async_write(ss,boost::asio::buffer(__chatrecode->request()),
         [this, &ss](const boost::system::error_code& ec, std::size_t /*length*/) {
             if (!ec) {
@@ -120,29 +147,22 @@ Ai_Agent::Ai_Agent(std::string url,std::string port,std::string key) {
             }
         });
 
-    io_context.run();
+    io.run();
 }
 
 void Ai_Agent::__read(boost::beast::ssl_stream<boost::beast::tcp_stream>& ss) {
-    //asio::buffer 对string是通过string.size()返回值来判断buffer的大小
     __buf.clear();
-    //这里有留存的bug
-    asio::async_read_until(ss,asio::dynamic_buffer(__buf),'\r\n',
+    asio::async_read_until(ss,asio::dynamic_buffer(__buf),"\r\n\r\n",
         [this, &ss](const boost::system::error_code& ec, std::size_t length)
         {
+            ///
             if (!ec) {
                 std::string http;
                 http+=__buf;
                 __buf.clear();
-                asio::read_until(ss,asio::dynamic_buffer(__buf),'\r\n\r\n');
+                //std::cout<<http<<std::endl;
+                asio::read_until(ss,asio::dynamic_buffer(__buf),"\r\n\r\n");
                 http+=__buf;
-                __buf.clear();
-                asio::read_until(ss,asio::dynamic_buffer(__buf),'\r\n\r\n');
-                http+=__buf;
-                __buf.clear();
-                asio::read_until(ss,asio::dynamic_buffer(__buf),'\r\n\r\n');
-                http+=__buf;
-                __buf.clear();
                 boost::regex rex("\"content\":\"(.*?)\"");
                 boost::smatch match;
                 boost::regex_search(http,match,rex);
@@ -150,30 +170,27 @@ void Ai_Agent::__read(boost::beast::ssl_stream<boost::beast::tcp_stream>& ss) {
                 __chatrecode->commit("assistant",match[1]);
                 __chat(ss);
             } else {
-                std::cerr << "Read failed: " << ec.message() << std::endl;
+                //std::cerr << "Read failed: " << ec.message() << std::endl;
+                auto &io=*__api->_io_adder;
+                auto host=__api->_host;
+                delete __api;
+                __api=new __Api(io,host);
+                write(ss,boost::asio::buffer(__chatrecode->request()));
+                read_until(ss,asio::dynamic_buffer(__buf),"\r\n\r\n");
+                std::string http;
+                http+=__buf;
+                __buf.clear();
+                asio::read_until(ss,asio::dynamic_buffer(__buf),"\r\n\r\n");
+                http+=__buf;
+                boost::regex rex("\"content\":\"(.*?)\"");
+                boost::smatch match;
+                boost::regex_search(http,match,rex);
+                std::cout<< match[1]<<std::endl;
+                __chatrecode->commit("assistant",match[1]);
+                __chat(ss);
             }
         }
     );
-    // __buf.clear();
-    // http::message<false, boost::beast::http::string_body> message;
-
-    // http::async_read(ss, asio::dynamic_buffer(__buf), message,
-    //     [this,&message, &ss]
-    //     (beast::error_code ec, size_t) {
-    //         if (ec) {
-    //             std::cerr << "Read failed: " << ec.message() << std::endl;
-    //             return;
-    //         }
-
-    //         try {
-    //             json::value json_res = json::parse(message.body());
-    //             std::string content = json_res.at("content").as_string().c_str();
-    //             __chatrecode->commit("assistant", content);
-    //             __chat(ss); // 继续下一轮通信
-    //         } catch (const std::exception& e) {
-    //             std::cerr << "Error processing response: " << e.what() << std::endl;
-    //         }
-    //     });
 }
 
 void Ai_Agent::__chat(boost::beast::ssl_stream<boost::beast::tcp_stream>& ss) {
@@ -192,6 +209,7 @@ void Ai_Agent::__chat(boost::beast::ssl_stream<boost::beast::tcp_stream>& ss) {
 }
 
 Ai_Agent::~Ai_Agent()
-{
+{   
+    delete __api;
     delete __chatrecode;
 }

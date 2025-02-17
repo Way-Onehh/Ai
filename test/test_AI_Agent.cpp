@@ -1,12 +1,14 @@
 #include<AI_Agent.h>
 #include<iostream>
 
-#include<boost/regex.hpp>
-
-int main() {
+int main(int argc,char **argv) {
     try
     {
-        Ai_Agent a("api.deepseek.com","443","Bearer sk-a2af40b9abfa4e66bbf0a09631e0b585");
+        if(argc==1)
+        Ai_Agent a("https://api.deepseek.com/chat/completions","deepseek-chat","sk-a2af40b9abfa4e66bbf0a09631e0b585");
+        if(argc!=1)
+
+        Ai_Agent a(argv[1],argv[2],argv[3]);
     }
     catch(std::exception& e)
     {
