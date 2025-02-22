@@ -1,11 +1,23 @@
 #include<AI_Agent.h>
 #include<iostream>
-
+#include<fstream>
 int main(int argc,char **argv) {
     try
     {
+        std::fstream fs;
+        fs.open("D:/wr/Ai/key");
+        
+        if(!fs) 
+        {
+          std::cout<<"need a key"<<std::endl;
+          return -1;
+        }
+        std::string key;
+        fs>>key;
+        fs.close();
+
         if(argc==1)
-        Ai_Agent a("https://api.deepseek.com/chat/completions","deepseek-reasoner","sk-a2af40b9abfa4e66bbf0a09631e0b585",
+        Ai_Agent a("https://api.deepseek.com/chat/completions","deepseek-reasoner",key,
         R"([
           {
             "content": "you are a helpful assistant",
