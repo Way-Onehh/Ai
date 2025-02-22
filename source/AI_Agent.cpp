@@ -34,19 +34,10 @@ private:
     httprequest __req;
     parser __parser;
 public:
-    __Chatrecode(string host,string target,string model,string key )
+    __Chatrecode(string host,string target,string model,string key,string prompt)
     {
         string josn__str=R"({
-        "messages": [
-          {
-            "content": "你是个ai助手",
-            "role": "system"
-          },
-          {
-            "content": "你好",
-            "role": "user"
-          }
-        ],
+        "messages": null,
         "model": null,
         "frequency_penalty": 0,
         "max_tokens": 2048,
@@ -65,6 +56,8 @@ public:
         "top_logprobs": null
 })";
         __json=json::parse(josn__str);
+        json::value prompt_josn=json::parse(prompt);
+        __json.as_object().insert_or_assign("messages",prompt_josn);
         __json.as_object().insert_or_assign("model",model);
         __req.method(http::verb::post);
         __req.target(target);
@@ -124,7 +117,7 @@ class Ai_Agent::__Api
         
 };
 
-Ai_Agent::Ai_Agent(std::string url,std::string model,std::string key) {
+Ai_Agent::Ai_Agent(string url,string model,string key,string prompt) {
     //Initialization
     boost::regex url_regex(R"(https://(.*?)(/.*))");
     boost::smatch match;
@@ -134,7 +127,7 @@ Ai_Agent::Ai_Agent(std::string url,std::string model,std::string key) {
 
     if(host.empty() || target.empty()) throw ;
      
-    __chatrecode=new __Chatrecode(host,target,model,key);
+    __chatrecode=new __Chatrecode(host,target,model,key,prompt);
     boost::asio::io_context io;
     __api=new __Api(io,host);
     auto& ss=__api->ss;
